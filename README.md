@@ -4,7 +4,7 @@ EcoVision is an environmental monitoring and learning dashboard with live air-qu
 
 ## Project Links
 
-- Application: ecovision-c4umkiwfg-samrudh-ns-projects.vercel.app (available when running locally; no public deployment is configured yet)
+- Application:  https://vercel.com/samrudh-ns-projects/ecovision/55G4z5k4U8jCi9Mo6miQbLZS2ybR (available when running locally; no public deployment is configured yet)
 - API documentation:  https://ecovision-api-6jve.onrender.com (available when the backend is running)
 - Source repository: [github.com/samrudh-source/sample](https://github.com/samrudh-source/sample)
 
