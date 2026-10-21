@@ -1,0 +1,197 @@
+import { useEffect, useState } from 'react'
+import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import { Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BookOpen, Check, CircleHelp, Cloud, Compass, Factory, Gauge, Globe2, Leaf, MapPin, Menu, Navigation, Search, ShieldCheck, SlidersHorizontal, Trees, Wind, X } from 'lucide-react'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { compareScenarios, getAwareness, getEnvironment, getHistory, runSimulation, submitQuiz } from './api'
+import type { EnvironmentalData, SimulationInput, SimulationResult } from './api'
+
+const defaults: SimulationInput = { vehicles: 6500, industrial_emissions: 55, construction_dust: 30, population_density: 55, green_cover: 24, trees: 12000, wind_speed: 8, wind_direction: 225, rainfall: 0, traffic_restrictions: 0, industrial_control: 10, public_transport: 35 }
+const navItems = [{ id: 'overview', label: 'Overview', icon: Activity }, { id: 'simulation', label: 'Live simulation', icon: SlidersHorizontal }, { id: 'map', label: 'Pollution map', icon: Globe2 }, { id: 'scenarios', label: 'Scenario planner', icon: Compass }, { id: 'awareness', label: 'Learning center', icon: BookOpen }]
+const colorFor = (value: number | null) => value === null ? 'var(--muted)' : value <= 50 ? 'var(--green)' : value <= 100 ? 'var(--yellow)' : value <= 150 ? 'var(--orange)' : 'var(--red)'
+const labelFor = (value: number | null) => value === null ? 'Unavailable' : value <= 50 ? 'Good' : value <= 100 ? 'Moderate' : value <= 150 ? 'Sensitive groups' : value <= 200 ? 'Unhealthy' : value <= 300 ? 'Very unhealthy' : 'Hazardous'
+const markerIcon = L.divIcon({ className: 'location-marker', html: '<span></span>', iconSize: [20, 20], iconAnchor: [10, 10] })
+
+function MapResize({ center }: { center: [number, number] }) {
+  const map = useMap()
+  useEffect(() => { map.setView(center, map.getZoom()); const timer = window.setTimeout(() => map.invalidateSize(), 120); return () => window.clearTimeout(timer) }, [map, center])
+  return null
+}
+
+function App() {
+  const [page, setPage] = useState('overview')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [city, setCity] = useState('New Delhi')
+  const [cityInput, setCityInput] = useState('New Delhi')
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number }>()
+  const [live, setLive] = useState<EnvironmentalData | null>(null)
+  const [history, setHistory] = useState<{ time: string; pm25: number | null; pm10: number | null; us_aqi: number | null }[]>([])
+  const [liveError, setLiveError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [inputs, setInputs] = useState(defaults)
+  const [simulation, setSimulation] = useState<SimulationResult | null>(null)
+  const [simError, setSimError] = useState('')
+  const [ecoMode, setEcoMode] = useState(false)
+  const [comparisons, setComparisons] = useState<Awaited<ReturnType<typeof compareScenarios>> | null>(null)
+  const [facts, setFacts] = useState<{ category: string; title: string; body: string; source: string }[]>([])
+  const [answers, setAnswers] = useState<number[]>([])
+  const [quizScore, setQuizScore] = useState<{ score: number; total: number } | null>(null)
+  const [treeCount, setTreeCount] = useState(10)
+  const [clock, setClock] = useState(new Date())
+
+  useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer) }, [])
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setLiveError('')
+    const refresh = () => Promise.all([getEnvironment(city, coordinates), getHistory(city)])
+      .then(([data, points]) => { if (active) { setLive(data); setHistory(points); setCityInput(data.city) } })
+      .catch((error: Error) => { if (active) setLiveError(error.message || 'Public environmental data is unavailable.') })
+      .finally(() => { if (active) setLoading(false) })
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 5 * 60 * 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [city, coordinates])
+  useEffect(() => {
+    let active = true
+    runSimulation(inputs).then(result => { if (active) { setSimulation(result); setSimError('') } }).catch((error: Error) => { if (active) setSimError(error.message) })
+    return () => { active = false }
+  }, [inputs])
+  useEffect(() => { getAwareness().then(result => setFacts(result.facts)).catch(() => setFacts([])) }, [])
+
+  const update = (key: keyof SimulationInput, value: number) => setInputs(current => ({ ...current, [key]: value }))
+  const navigate = (id: string) => { setPage(id); setSidebarOpen(false) }
+  const findCity = (event: React.FormEvent) => { event.preventDefault(); if (cityInput.trim()) { setCoordinates(undefined); setCity(cityInput.trim()) } }
+  const locate = () => {
+    if (!navigator.geolocation) { setLiveError('Geolocation is not available in this browser.'); return }
+    navigator.geolocation.getCurrentPosition(position => { setCity('Your location'); setCityInput('Your location'); setCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude }) }, () => setLiveError('Location permission was not granted. Search for a city instead.'), { timeout: 8000 })
+  }
+
+  return <div className="app-shell">
+    {sidebarOpen && <button className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
+    <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <div className="brand"><div className="brand-mark"><Leaf size={20} /></div><span>eco<span className="brand-light">vision</span></span><button className="icon-button mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={18} /></button></div>
+      <div className="workspace-label">MONITORING WORKSPACE</div>
+      <nav className="primary-nav" aria-label="Main navigation">{navItems.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${page === item.id ? 'nav-active' : ''}`} onClick={() => navigate(item.id)}><Icon size={17} /><span>{item.label}</span>{page === item.id && <i />}</button> })}</nav>
+      <div className="sidebar-spacer" />
+      <div className="sidebar-status"><span className={`status-dot ${live ? 'dot-green' : ''}`} /><div><strong>{live ? 'Data connection active' : 'Waiting for data'}</strong><small>Open-Meteo · public data</small></div></div>
+      <div className="sidebar-footer"><span><Trees size={16} /></span><span>Better choices, clearer air.</span></div>
+    </aside>
+    <main className="main-column">
+      <header className="topbar"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><Menu size={20} /></button><div className="breadcrumb"><span>EcoVision</span><b>/</b><strong>{navItems.find(item => item.id === page)?.label}</strong></div><div className="topbar-right"><div className="live-clock"><i />LIVE <span>{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div><button className="top-help" aria-label="Open learning center" onClick={() => navigate('awareness')}><CircleHelp size={18} /></button></div></header>
+      <div className="page-content">
+        {page === 'overview' && <Overview city={city} cityInput={cityInput} setCityInput={setCityInput} findCity={findCity} locate={locate} live={live} error={liveError} loading={loading} history={history} navigate={navigate} coordinates={coordinates} />}
+        {page === 'simulation' && <Simulation inputs={inputs} update={update} result={simulation} error={simError} ecoMode={ecoMode} setEcoMode={setEcoMode} />}
+        {page === 'map' && <MapPage city={city} live={live} error={liveError} coordinates={coordinates} locate={locate} />}
+        {page === 'scenarios' && <ScenarioPage inputs={inputs} result={comparisons} compare={() => compareScenarios(inputs).then(setComparisons)} />}
+        {page === 'awareness' && <Awareness facts={facts} answers={answers} setAnswers={setAnswers} score={quizScore} setScore={setQuizScore} treeCount={treeCount} setTreeCount={setTreeCount} />}
+      </div>
+      <footer className="page-footer"><span>Environmental intelligence for better decisions.</span><span>LIVE AIR DATA: OPEN-METEO <i>·</i> MAP: OPENSTREETMAP</span></footer>
+    </main>
+  </div>
+}
+
+function Heading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
+  return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div>{action}</div>
+}
+
+function Overview({ city, cityInput, setCityInput, findCity, locate, live, error, loading, history, navigate, coordinates }: {
+  city: string; cityInput: string; setCityInput: (value: string) => void; findCity: (event: React.FormEvent) => void; locate: () => void
+  live: EnvironmentalData | null; error: string; loading: boolean; history: { time: string; pm25: number | null; pm10: number | null; us_aqi: number | null }[]
+  navigate: (id: string) => void; coordinates?: { latitude: number; longitude: number }
+}) {
+  const aqi = live?.aqi.us.value ?? null
+  const pm25 = live?.pollutants.find(item => item.key === 'pm2_5')
+  const pm10 = live?.pollutants.find(item => item.key === 'pm10')
+  const chart = history.filter(point => point.pm25 !== null || point.pm10 !== null).map(point => ({ time: new Date(point.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), pm25: point.pm25, pm10: point.pm10 }))
+  const weather = live?.weather
+  const time = live?.updated_at ? new Date(live.updated_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Timestamp unavailable'
+  const pollutants = live?.pollutants || ['PM2.5', 'PM10', 'Carbon monoxide', 'Nitrogen dioxide', 'Sulphur dioxide', 'Ozone'].map((label, index) => ({ key: String(index), label, value: null, unit: 'µg/m³', status: 'unavailable' }))
+  return <>
+    <Heading eyebrow="ENVIRONMENTAL BRIEFING · CITY MONITOR" title="Know your air. Shape what comes next." description="A clear view of current conditions and the choices that can change them." action={<form className="city-search" onSubmit={findCity}><Search size={16} /><input aria-label="Search city" value={cityInput} onChange={event => setCityInput(event.target.value)} /><button aria-label="Search city"><ArrowRight size={16} /></button></form>} />
+    <div className="location-strip"><span><MapPin size={15} />{live?.city || city}{coordinates ? ' · selected coordinates' : ''}</span><i /><span className="data-label"><b />LIVE API DATA</span><span className="updated-text">Updated {time}</span><button className="subtle-button" onClick={locate}><Navigation size={14} />Use my location</button></div>
+    {error && <div className="notice error-notice"><CircleHelp size={17} /><span><strong>Live readings unavailable.</strong> {error} Simulation tools remain available and are labeled separately.</span></div>}
+    {loading && !live && <div className="notice"><span className="loading-spinner" />Connecting to public environmental data…</div>}
+    <section className="overview-grid">
+      <div className="aqi-panel panel"><div className="panel-topline"><span className="panel-kicker">AIR QUALITY · LIVE</span><span className="pill source-pill">OPEN-METEO</span></div><div className="aqi-main"><div className="aqi-ring" style={{ '--aqi-color': colorFor(aqi) } as React.CSSProperties}><div><span>{aqi ?? '—'}</span><small>US AQI</small></div></div><div className="aqi-copy"><div style={{ color: colorFor(aqi) }}>{labelFor(aqi)}</div><h2>{aqi === null ? 'No current index' : aqi <= 50 ? 'Air looks clear.' : aqi <= 100 ? 'Sensitive groups take note.' : 'Take care outdoors.'}</h2><p>US AQI shown as provided. No conversion to Indian AQI.</p></div></div><div className="aqi-scales"><Scale label="US AQI" value={aqi} /><Scale label="European AQI" value={live?.aqi.european.value ?? null} /></div></div>
+      <div className="conditions-panel panel"><div className="panel-heading"><div><span className="panel-kicker">RIGHT NOW</span><h3>Outdoor conditions</h3></div><Cloud size={20} className="panel-icon" /></div><div className="condition-grid"><Condition label="Temperature" value={weather?.temperature_2m.value} unit={weather?.temperature_2m.unit || '°C'} icon={Gauge} /><Condition label="Humidity" value={weather?.relative_humidity_2m.value} unit={weather?.relative_humidity_2m.unit || '%'} icon={Activity} /><Condition label="Wind speed" value={weather?.wind_speed_10m.value} unit={weather?.wind_speed_10m.unit || 'km/h'} icon={Wind} /><Condition label="Rainfall" value={weather?.precipitation.value} unit={weather?.precipitation.unit || 'mm'} icon={Cloud} /></div><div className="weather-source"><i />Forecast API · timestamped values</div></div>
+      <div className="trend-panel panel"><div className="panel-heading"><div><span className="panel-kicker">RECENT & FORECAST</span><h3>Particulate matter</h3></div><span className="pill live-pill">Hourly · live API</span></div>{chart.length ? <div className="chart-wrap trend-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chart} margin={{ top: 10, right: 8, left: -20, bottom: 0 }}><defs><linearGradient id="pm25Fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2e8a64" stopOpacity={0.2} /><stop offset="100%" stopColor="#2e8a64" stopOpacity={0.01} /></linearGradient></defs><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e7ece6" /><XAxis dataKey="time" tickLine={false} axisLine={false} tick={{ fill: '#8a948c', fontSize: 10 }} interval="preserveStartEnd" /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#8a948c', fontSize: 10 }} /><Tooltip contentStyle={{ border: '1px solid #e4e9e2', borderRadius: 8, fontSize: 12 }} /><Area type="monotone" dataKey="pm25" name="PM2.5 (µg/m³)" stroke="#25845b" strokeWidth={2.2} fill="url(#pm25Fill)" connectNulls /><Line type="monotone" dataKey="pm10" name="PM10 (µg/m³)" stroke="#d3934a" strokeWidth={1.6} dot={false} connectNulls /></AreaChart></ResponsiveContainer></div> : <div className="empty-chart"><Activity size={22} /><span>{loading ? 'Fetching hourly data…' : 'Hourly live data unavailable'}</span></div>}<div className="chart-legend"><span><i className="legend-green" />PM2.5 <b>{pm25?.value ?? '—'} {pm25?.unit}</b></span><span><i className="legend-ochre" />PM10 <b>{pm10?.value ?? '—'} {pm10?.unit}</b></span><small>Open-Meteo · history + forecast</small></div></div>
+      <div className="snapshot-panel panel"><div className="panel-heading"><div><span className="panel-kicker">MEASURED VARIABLES</span><h3>Pollutant snapshot</h3></div><span className="pill source-pill">{live ? 'LIVE' : 'NO DATA'}</span></div><div className="pollutant-list">{pollutants.map(item => <div className="pollutant-row" key={item.key}><span className="pollutant-name"><i className={`pollutant-dot pollutant-${item.key}`} />{item.label}</span><span className="pollutant-value">{item.value ?? '—'} <small>{item.unit}</small></span></div>)}</div><div className="data-footnote">Unavailable values remain blank; no sensor readings are inferred.</div></div>
+      <div className="map-panel panel"><div className="panel-heading map-heading"><div><span className="panel-kicker">LOCATION CONTEXT</span><h3>Explore your area</h3></div><button className="text-button" onClick={() => navigate('map')}>Open map <ArrowRight size={14} /></button></div><LocationMap live={live} coordinates={coordinates} compact /><div className="map-caption"><MapPin size={13} />Selected query location · not a monitoring station</div></div>
+      <div className="insight-panel panel"><div className="insight-icon"><Leaf size={17} /></div><div><span className="panel-kicker">MAKE IT ACTIONABLE</span><h3>Test a cleaner-day scenario</h3><p>Explore how transport, industry and green cover shift the modelled outcome.</p><button className="text-button" onClick={() => navigate('simulation')}>Open simulator <ArrowRight size={14} /></button></div></div>
+    </section>
+  </>
+}
+
+function Scale({ label, value }: { label: string; value: number | null }) { return <div className="scale-item"><span>{label}</span><strong style={{ color: colorFor(value) }}>{value ?? '—'}</strong><small>{labelFor(value)}</small></div> }
+function Condition({ label, value, unit, icon: Icon }: { label: string; value?: number | null; unit: string; icon: typeof Gauge }) { return <div className="condition"><span className="condition-icon"><Icon size={15} /></span><span className="condition-label">{label}</span><strong>{value ?? '—'}<small> {unit}</small></strong></div> }
+
+function LocationMap({ live, coordinates, compact = false }: { live: EnvironmentalData | null; coordinates?: { latitude: number; longitude: number }; compact?: boolean }) {
+  const center: [number, number] = coordinates ? [coordinates.latitude, coordinates.longitude] : live ? [live.coordinates.latitude, live.coordinates.longitude] : [28.6139, 77.209]
+  return <div className={`leaflet-frame ${compact ? 'leaflet-compact' : ''}`}><MapContainer center={center} zoom={compact ? 10 : 11} scrollWheelZoom={!compact} zoomControl={!compact} className="leaflet-map"><MapResize center={center} /><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />{live && <Marker position={[live.coordinates.latitude, live.coordinates.longitude]} icon={markerIcon}><Popup><strong>{live.city}</strong><br />Queried location, not a sensor.<br />US AQI: {live.aqi.us.value ?? 'unavailable'}<br />Source: Open-Meteo</Popup></Marker>}</MapContainer>{!live && <div className="map-empty-label"><MapPin size={14} />{compact ? 'Map preview' : 'No queried coordinate available'}</div>}</div>
+}
+
+const groups: { title: string; icon: typeof Factory; controls: { key: keyof SimulationInput; label: string; min: number; max: number; step: number; unit: string }[] }[] = [
+  { title: 'Emission sources', icon: Factory, controls: [{ key: 'vehicles', label: 'Vehicles on road', min: 0, max: 20000, step: 500, unit: 'vehicles' }, { key: 'industrial_emissions', label: 'Industrial emissions', min: 0, max: 100, step: 1, unit: '%' }, { key: 'construction_dust', label: 'Construction dust', min: 0, max: 100, step: 1, unit: '%' }, { key: 'population_density', label: 'Population density', min: 0, max: 100, step: 1, unit: '%' }] },
+  { title: 'Natural conditions', icon: Wind, controls: [{ key: 'green_cover', label: 'Green cover', min: 0, max: 100, step: 1, unit: '%' }, { key: 'trees', label: 'Trees in scenario', min: 0, max: 100000, step: 1000, unit: 'trees' }, { key: 'wind_speed', label: 'Wind speed', min: 0, max: 40, step: 1, unit: 'km/h' }, { key: 'wind_direction', label: 'Wind direction', min: 0, max: 360, step: 5, unit: '°' }, { key: 'rainfall', label: 'Rainfall intensity', min: 0, max: 100, step: 1, unit: '%' }] },
+  { title: 'Policy levers', icon: ShieldCheck, controls: [{ key: 'traffic_restrictions', label: 'Traffic restrictions', min: 0, max: 100, step: 1, unit: '%' }, { key: 'industrial_control', label: 'Emission-control efficiency', min: 0, max: 100, step: 1, unit: '%' }, { key: 'public_transport', label: 'Public transport usage', min: 0, max: 100, step: 1, unit: '%' }] },
+]
+
+function Simulation({ inputs, update, result, error, ecoMode, setEcoMode }: { inputs: SimulationInput; update: (key: keyof SimulationInput, value: number) => void; result: SimulationResult | null; error: string; ecoMode: boolean; setEcoMode: (value: boolean) => void }) {
+  const mode = (eco: boolean) => { setEcoMode(eco); const next = eco ? { vehicles: 4500, traffic_restrictions: 30, industrial_control: 65, public_transport: 70, green_cover: 42, trees: 30000 } : defaults; Object.entries(next).forEach(([key, value]) => update(key as keyof SimulationInput, value)) }
+  return <>
+    <Heading eyebrow="SCENARIO LAB · MODEL OUTPUTS" title="Change the conditions." description="Adjust local assumptions and see how the simplified model responds. Every output here is simulated." action={<div className="mode-switch"><button className={!ecoMode ? 'mode-selected' : ''} onClick={() => mode(false)}>Normal</button><button className={ecoMode ? 'mode-selected' : ''} onClick={() => mode(true)}><Leaf size={14} />Eco mode</button></div>} />
+    <div className="simulation-banner"><span className="simulated-stamp"><Activity size={13} />SIMULATED</span><span>Simplified teaching model · not a forecast, sensor reading or official AQI</span><button className="text-button" onClick={() => document.getElementById('model-notes')?.scrollIntoView({ behavior: 'smooth' })}>Model notes <ArrowRight size={14} /></button></div>
+    <div className="simulation-layout"><div className="controls-column">{groups.map(group => { const Icon = group.icon; return <section className="controls-panel panel" key={group.title}><div className="controls-header"><span><Icon size={16} /></span><h3>{group.title}</h3></div>{group.controls.map(control => <label className="range-control" key={control.key}><span className="range-label"><span>{control.label}</span><strong>{inputs[control.key].toLocaleString()} <small>{control.unit}</small></strong></span><input type="range" aria-label={control.label} min={control.min} max={control.max} step={control.step} value={inputs[control.key]} onChange={event => update(control.key, Number(event.target.value))} style={{ '--range-progress': `${(inputs[control.key] - control.min) / (control.max - control.min) * 100}%` } as React.CSSProperties} /><span className="range-ends"><span>{control.min.toLocaleString()}</span><span>{control.max.toLocaleString()} {control.unit}</span></span></label>)}</section> })}</div>
+      <div className="simulation-results"><CityScene inputs={inputs} ecoMode={ecoMode} />{error && <div className="notice error-notice">{error}</div>}<div className="simulation-metrics">{result ? <><Metric label="Simulated PM2.5" value={result.pm25} unit="µg/m³" accent="green" /><Metric label="Simulated PM10" value={result.pm10} unit="µg/m³" accent="ochre" /><Metric label="Relative index" value={result.index} unit="" accent="red" /></> : <span>Calculating scenario…</span>}</div>
+        <section className="panel simulation-chart-panel"><div className="panel-heading"><div><span className="panel-kicker">NEXT 24 HOURS · SIMULATED</span><h3>Modelled particulate trend</h3></div><span className="pill simulated-pill">Illustrative</span></div>{result && <div className="chart-wrap simulation-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={result.forecast_24h} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e7ece6" /><XAxis dataKey="hour" tickFormatter={hour => `${hour}:00`} tickLine={false} axisLine={false} tick={{ fill: '#8a948c', fontSize: 10 }} interval={3} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#8a948c', fontSize: 10 }} /><Tooltip contentStyle={{ border: '1px solid #e4e9e2', borderRadius: 8, fontSize: 12 }} /><Line type="monotone" dataKey="pm25" name="PM2.5 (µg/m³)" stroke="#25845b" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="pm10" name="PM10 (µg/m³)" stroke="#d3934a" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>}</section>
+        <section className="panel source-panel"><div className="panel-heading"><div><span className="panel-kicker">MODEL CONTRIBUTIONS</span><h3>Relative source mix</h3></div><span className="pill simulated-pill">Simulated</span></div>{Object.entries(result?.source_contributions || {}).map(([name, value]) => <div className="contribution-row" key={name}><span>{name}</span><div><i style={{ width: `${value}%` }} /></div><strong>{value}%</strong></div>)}<div className="improvement-note"><Wind size={15} />Estimated improvement window: <strong>{result?.estimated_improvement_hours ?? '—'} hours</strong></div></section>
+        <section className="model-notes panel" id="model-notes"><div className="panel-heading"><div><span className="panel-kicker">READ BEFORE INTERPRETING</span><h3>Model boundaries</h3></div><CircleHelp size={17} /></div><ul>{(result?.assumptions || []).map(note => <li key={note}>{note}</li>)}</ul><p>For learning and comparison only. Not a regulatory index, local exposure estimate or health recommendation.</p></section>
+      </div></div><PollutionTypes inputs={inputs} />
+  </>
+}
+
+function Metric({ label, value, unit, accent }: { label: string; value: number; unit: string; accent: string }) { return <div className="metric-card panel"><i data-accent={accent} /><span>{label}</span><strong>{value}<small>{unit}</small></strong><small>MODELLED VALUE</small></div> }
+
+function CityScene({ inputs, ecoMode }: { inputs: SimulationInput; ecoMode: boolean }) {
+  const haze = Math.max(0, Math.min(1, inputs.vehicles / 18000 * 0.35 + inputs.industrial_emissions / 100 * 0.4 + inputs.construction_dust / 100 * 0.25 - inputs.green_cover / 100 * 0.25 - inputs.rainfall / 100 * 0.2))
+  return <div className={`city-scene ${ecoMode ? 'scene-eco' : ''}`} style={{ '--haze': haze, '--wind-angle': `${inputs.wind_direction}deg` } as React.CSSProperties}><div className="scene-sky"><div className="scene-sun" /><div className="scene-cloud cloud-one" /><div className="scene-cloud cloud-two" /><div className="scene-haze" /><span className="scene-label"><i />{ecoMode ? 'ECO MODE' : 'NORMAL MODE'} · SIMULATION</span></div><div className="factory-row"><div className="factory-building"><div className="factory-roof" /><i /><i /><i /></div><div className="chimney chimney-one"><span className="smoke smoke-one" /><span className="smoke smoke-two" /></div><div className="chimney chimney-two"><span className="smoke smoke-three" /></div><div className="building building-one" /><div className="building building-two" /><div className="building building-three" /><div className="building building-four" /></div><div className="scene-trees"><span>♣</span><span>♣</span><span>♣</span><span>♣</span><span>♣</span></div><div className="road"><div className="road-line" /><div className="car car-one" /><div className="car car-two" /><div className="car car-three" /></div><div className="scene-caption"><span><Factory size={13} />{inputs.industrial_emissions}% industry</span><span><Trees size={13} />{inputs.green_cover}% green cover</span></div></div>
+}
+
+function PollutionTypes({ inputs }: { inputs: SimulationInput }) {
+  const water = Math.max(20, Math.min(95, Math.round(88 - inputs.construction_dust * 0.2 - inputs.industrial_emissions * 0.18 + inputs.industrial_control * 0.12)))
+  const soil = Math.max(18, Math.min(96, Math.round(84 - inputs.construction_dust * 0.26 - inputs.industrial_emissions * 0.14 + inputs.green_cover * 0.18)))
+  const noise = Math.round(38 + inputs.vehicles / 1000 * 2 + inputs.construction_dust * 0.16 + inputs.industrial_emissions * 0.12 - inputs.traffic_restrictions * 0.08)
+  return <section className="pollution-types"><div className="section-intro"><div className="eyebrow">BEYOND THE AIR</div><h2>One city, many pressures.</h2><p>These category indicators are teaching scenarios, not local environmental measurements.</p></div><div className="type-grid"><TypeCard title="Water" icon={<Cloud size={17} />} value={`${water}/100`} label="Illustrative quality score" note="No live water feed connected." /><TypeCard title="Soil" icon={<Trees size={17} />} value={`${soil}/100`} label="Illustrative quality score" note="Site sampling is required for real results." /><TypeCard title="Noise" icon={<Activity size={17} />} value={`${noise} dB`} label="Estimated scenario level" note="Derived from traffic and activity controls." /></div></section>
+}
+
+function TypeCard({ title, icon, value, label, note }: { title: string; icon: React.ReactNode; value: string; label: string; note: string }) { return <article className="type-card panel"><span className="type-icon">{icon}</span><small>{title.toUpperCase()} · SIMULATED</small><strong>{value}</strong><span>{label}</span><p>{note}</p></article> }
+
+function MapPage({ city, live, error, coordinates, locate }: { city: string; live: EnvironmentalData | null; error: string; coordinates?: { latitude: number; longitude: number }; locate: () => void }) {
+  return <><Heading eyebrow="GEOGRAPHIC CONTEXT · OPENSTREETMAP" title="A place, not a sensor network." description="Explore the selected location alongside its API-provided environmental summary." action={<button className="outline-button" onClick={locate}><Navigation size={15} />Use my location</button>} />{error && <div className="notice error-notice"><CircleHelp size={17} /><span>{error} Search a city from the overview to try again.</span></div>}
+    <div className="map-page-grid"><section className="map-large-panel panel"><div className="panel-heading"><div><span className="panel-kicker">OPENSTREETMAP</span><h3>{live?.city || city}</h3></div><span className="pill source-pill">{live ? 'QUERY LOCATION' : 'NO LIVE LOCATION'}</span></div><LocationMap live={live} coordinates={coordinates} /><div className="map-caption"><MapPin size={13} />{live ? `Selected query coordinate · ${live.coordinates.latitude.toFixed(3)}, ${live.coordinates.longitude.toFixed(3)}` : 'No queried coordinate available'}</div></section><aside className="map-detail-column"><div className="panel map-reading-panel"><span className="panel-kicker">CURRENT SUMMARY · LIVE API</span><div className="map-big-aqi" style={{ color: colorFor(live?.aqi.us.value ?? null) }}>{live?.aqi.us.value ?? '—'}<small>US AQI</small></div><p>{labelFor(live?.aqi.us.value ?? null)} · {live?.updated_at || 'No timestamp'}</p><div className="map-scale-row"><span>European AQI</span><strong>{live?.aqi.european.value ?? '—'}</strong></div><div className="map-scale-row"><span>PM2.5</span><strong>{live?.pollutants.find(item => item.key === 'pm2_5')?.value ?? '—'} µg/m³</strong></div></div><div className="panel map-integrity"><div><ShieldCheck size={17} /><strong>Data integrity</strong></div><p>No fabricated stations or measured hotspots are shown. One marker identifies the selected query location only.</p><span>Open-Meteo + OpenStreetMap</span></div><div className="panel unavailable-panel"><span className="panel-kicker">OTHER ENVIRONMENTAL LAYERS</span>{['Water', 'Soil', 'Noise'].map(name => <div className="layer-row" key={name}><span>{name}</span><span>No live dataset</span></div>)}</div></aside></div>
+  </>
+}
+
+function ScenarioPage({ inputs, result, compare }: { inputs: SimulationInput; result: Awaited<ReturnType<typeof compareScenarios>> | null; compare: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const run = async () => { setBusy(true); setError(''); try { await compare() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Scenario comparison is unavailable.') } finally { setBusy(false) } }
+  const chart = result ? [{ name: 'Baseline', pm25: result.baseline.pm25 }, ...result.comparisons.map(item => ({ name: item.name, pm25: item.result.pm25 }))] : []
+  return <><Heading eyebrow="WHAT-IF POLICY PLANNER · SIMULATED" title="Compare practical levers." description="Each option changes a defined model input. Results are relative teaching scenarios, not forecasts." action={<button className="primary-button" onClick={run} disabled={busy}>{busy ? 'Comparing…' : 'Run comparison'}<ArrowRight size={15} /></button>} /><div className="scenario-summary"><div><span className="panel-kicker">BASELINE INPUTS</span><strong>{inputs.vehicles.toLocaleString()} vehicles</strong><span>Traffic · {inputs.industrial_control}% industrial controls · {inputs.green_cover}% green cover</span></div><span className="simulated-stamp"><Activity size={13} />SIMULATED</span></div>{error && <div className="notice error-notice">{error}</div>}
+    <div className="scenario-presets">{[{ icon: Navigation, title: 'Private traffic', value: '−30%', note: 'Traffic restrictions' }, { icon: Activity, title: 'Public transport', value: '+40%', note: 'Usage rate' }, { icon: Factory, title: 'Industrial controls', value: '+50%', note: 'Control efficiency' }, { icon: Trees, title: 'Green cover', value: '+20%', note: 'Urban vegetation' }].map(item => { const Icon = item.icon; return <article className="preset-card panel" key={item.title}><span><Icon size={16} /></span><small>{item.title}</small><strong>{item.value}</strong><small>{item.note}</small></article> })}</div>
+    {result ? <div className="scenario-results"><section className="panel scenario-chart-panel"><div className="panel-heading"><div><span className="panel-kicker">PM2.5 COMPARISON · SIMULATED</span><h3>Estimated concentration by scenario</h3></div><span className="pill simulated-pill">µg/m³ · model output</span></div><div className="chart-wrap scenario-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={chart} margin={{ top: 10, right: 8, left: -18, bottom: 40 }}><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e7ece6" /><XAxis dataKey="name" interval={0} angle={-20} textAnchor="end" tickLine={false} axisLine={false} tick={{ fill: '#748078', fontSize: 10 }} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#8a948c', fontSize: 10 }} /><Tooltip contentStyle={{ border: '1px solid #e4e9e2', borderRadius: 8, fontSize: 12 }} /><Bar dataKey="pm25" name="PM2.5 (µg/m³)" radius={[4, 4, 0, 0]}>{chart.map((_, index) => <Cell key={index} fill={index === 0 ? '#bdc8bc' : index === chart.length - 1 ? '#23835a' : '#77aa86'} />)}</Bar></BarChart></ResponsiveContainer></div></section><section className="panel comparison-list"><div className="panel-heading"><div><span className="panel-kicker">RELATIVE TO BASELINE</span><h3>Scenario outcomes</h3></div></div><div className="comparison-row baseline-row"><span>Baseline · PM2.5</span><strong>{result.baseline.pm25} µg/m³</strong></div>{result.comparisons.map(item => <div className="comparison-row" key={item.name}><span>{item.name}</span><strong className={item.pm25_change <= 0 ? 'change-down' : 'change-up'}>{item.pm25_change <= 0 ? <ArrowDownRight size={14} /> : <ArrowUpRight size={14} />}{Math.abs(item.pm25_change)} µg/m³</strong></div>)}<p className="comparison-footnote">Approximate results use the current controls and documented illustrative coefficients.</p></section></div> : <div className="scenario-empty panel"><div><Compass size={21} /></div><h3>Build a comparison from your current settings.</h3><p>Compare six interventions against your baseline, including a combined package.</p><button className="primary-button" onClick={run} disabled={busy}>{busy ? 'Comparing…' : 'Compare scenarios'}<ArrowRight size={15} /></button></div>}
+    <div className="scenario-assumption"><CircleHelp size={16} /><span>Policy impacts change source or mitigation inputs in the model. This model is not locally calibrated.</span></div></>
+}
+
+function Awareness({ facts, answers, setAnswers, score, setScore, treeCount, setTreeCount }: { facts: { category: string; title: string; body: string; source: string }[]; answers: number[]; setAnswers: (answers: number[]) => void; score: { score: number; total: number } | null; setScore: (score: { score: number; total: number } | null) => void; treeCount: number; setTreeCount: (value: number) => void }) {
+  const questions = [{ question: 'Which statement best describes the map marker?', options: ['A government sensor', 'The selected queried location, not a sensor', 'A predicted pollution hotspot'] }, { question: 'Which AQI scales are returned by Open-Meteo?', options: ['US and European AQI, separately labeled', 'Indian AQI only', 'A universal AQI'] }, { question: 'How should the simulation be interpreted?', options: ['An official forecast', 'A simplified, illustrative scenario', 'A health diagnosis'] }]
+  const choose = async (index: number, value: number) => { const next = [...answers]; next[index] = value; setAnswers(next); setScore(null); if (next.length === questions.length && next.every(answer => answer !== undefined)) { try { const result = await submitQuiz(next); setScore({ score: result.score, total: result.total }) } catch { setScore(null) } } }
+  return <><Heading eyebrow="AWARENESS & LEARNING · KNOWLEDGE BUILDS ACTION" title="Make understanding useful." description="Explore the science, test what you know, and try a small everyday intervention." />
+    <section className="learning-facts"><div className="section-intro"><div className="eyebrow">FIELD NOTES</div><h2>Four connected environments.</h2><p>Reliable action starts by knowing what is measured and what still needs observation.</p></div><div className="facts-grid">{facts.length ? facts.map(fact => <article className="fact-card panel" key={fact.category}><span>{fact.category}</span><h3>{fact.title}</h3><p>{fact.body}</p><small>Reference: {fact.source}</small></article>) : <div className="notice">Learning notes are temporarily unavailable.</div>}</div></section>
+    <div className="learning-tools"><section className="panel quiz-panel"><div className="panel-heading"><div><span className="panel-kicker">QUICK CHECK · 3 QUESTIONS</span><h3>Data literacy quiz</h3></div><CircleHelp size={18} /></div>{questions.map((item, index) => <div className="quiz-question" key={item.question}><strong><i>{String(index + 1).padStart(2, '0')}</i>{item.question}</strong><div className="quiz-options">{item.options.map((option, choice) => <button key={option} className={`${answers[index] === choice ? 'quiz-selected' : ''} ${score && choice === [1, 0, 1][index] ? 'quiz-correct' : ''}`} onClick={() => void choose(index, choice)}>{option}{score && choice === [1, 0, 1][index] && <Check size={14} />}</button>)}</div></div>)}{score && <div className="quiz-result"><Check size={15} />Your score: {score.score}/{score.total}. Good environmental data starts with good questions.</div>}</section>
+      <section className="panel tree-panel"><div className="panel-heading"><div><span className="panel-kicker">TREE IMPACT CALCULATOR</span><h3>Estimate a planting scenario</h3></div><Trees size={19} /></div><label className="range-control"><span className="range-label"><span>Number of trees</span><strong>{treeCount}</strong></span><input type="range" aria-label="Number of trees" min="1" max="100" value={treeCount} onChange={event => setTreeCount(Number(event.target.value))} style={{ '--range-progress': `${(treeCount - 1) / 99 * 100}%` } as React.CSSProperties} /><span className="range-ends"><span>1</span><span>100</span></span></label><div className="tree-impact"><strong>{(treeCount * 21.8).toLocaleString()}</strong><span>kg CO₂ / year, illustrative estimate</span></div><p>Assumes 21.8 kg CO₂ absorbed per mature tree annually. Actual outcomes vary by species, age, climate, and survival.</p><div className="challenge-button"><small>TODAY'S CHALLENGE</small><strong>Choose one short trip to walk, cycle, or take public transport.</strong><span>Personal challenge · progress stored in this session</span></div></section></div>
+  </>
+}
+
+export default App
