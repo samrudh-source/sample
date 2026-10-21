@@ -2,6 +2,31 @@
 
 EcoVision is an environmental monitoring and learning dashboard with live air-quality data, an explicitly illustrative pollution simulator, policy comparisons, and an OpenStreetMap location view. It does not claim to have local water, soil, or noise sensors.
 
+## Project Links
+
+- Application: [http://localhost:5173](http://localhost:5173) (available when running locally; no public deployment is configured yet)
+- API documentation: [http://localhost:8000/docs](http://localhost:8000/docs) (available when the backend is running)
+- Source repository: [github.com/samrudh-source/sample](https://github.com/samrudh-source/sample)
+
+## What EcoVision Includes
+
+- Environmental dashboard with Open-Meteo air-quality and weather data, pollutant units, source labels, and timestamps.
+- Separate US and European AQI values, with no conversion or claim that either is Indian National AQI.
+- City search, optional browser geolocation, hourly particulate trends, and an OpenStreetMap view of the queried location.
+- Interactive air-pollution model with traffic, industry, dust, vegetation, weather, and policy controls; Normal and Eco modes; animated city scene; 24-hour illustrative trends; and source contributions.
+- What-if policy comparison for traffic, transit, industry, construction dust, green cover, and combined interventions.
+- Air, water, soil, and noise learning content, a short data-literacy quiz, and an assumption-based tree impact calculator.
+- FastAPI service with input validation, API caching, SQLite snapshot storage, and structured errors.
+
+The simulator is an educational scenario tool, not an atmospheric forecast, official air-quality index, exposure estimate, or health diagnosis. Details and equations are documented in [docs/simulation-model.md](docs/simulation-model.md).
+
+## Architecture
+
+- `frontend/`: React, TypeScript, and Vite interface; Recharts visualizations; Leaflet/OpenStreetMap map.
+- `backend/app/`: FastAPI endpoints, Open-Meteo integration, Pydantic schemas, and simulation calculations.
+- `backend/app/services/store.py`: SQLite snapshot persistence, isolated so it can be replaced with PostgreSQL for a multi-instance deployment.
+- `backend/tests/` and `frontend/src/App.test.tsx`: backend API/model tests and a frontend unavailable-data test.
+
 ## Requirements
 
 - Node.js 20 or newer and npm
